@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import LoadingSpinner from '../components/LoadingSpinner';
 import RecommendedSection from '../components/RecommendedSection';
+import ProductCard from '../components/ProductCard'; // ← ADDED
 import { trackProductView } from '../utils/activity';
 import './ProductDetail.css';
 
@@ -14,6 +15,7 @@ const ProductDetail = () => {
   const [loading, setLoading] = useState(true);
   const [addingToCart, setAddingToCart] = useState(false);
   const [addedToCart, setAddedToCart] = useState(false);
+  const [similar, setSimilar] = useState([]);        // ← ADDED
   const { isAuthenticated } = useAuth();
   const { addToCart } = useCart();
 
@@ -23,6 +25,15 @@ const ProductDetail = () => {
         const { data } = await api.get(`/products/${id}`);
         setProduct(data);
         trackProductView(data._id, data.category);
+
+        // ← ADDED: fetch similar products
+        try {
+          const { data: simData } = await api.get(`/products/${id}/similar`);
+          setSimilar(simData.similar || []);
+        } catch {
+          // similar products are non-critical — fail silently
+        }
+
       } catch (error) {
         console.error('Error fetching product:', error);
       } finally {
@@ -166,6 +177,20 @@ const ProductDetail = () => {
             </div>
           </div>
         </div>
+
+        {/* ← ADDED: Similar Products section */}
+        {similar.length > 0 && (
+          <section style={{ marginTop: '2.5rem' }}>
+            <h2 className="section-title">Similar Products</h2>
+            <div className="row g-3">
+              {similar.map(p => (
+                <div key={p._id} className="col-6 col-md-3">
+                  <ProductCard product={p} />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <RecommendedSection />
       </div>

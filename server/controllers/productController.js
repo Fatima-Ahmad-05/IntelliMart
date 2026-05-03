@@ -36,6 +36,8 @@ exports.createProduct = async (req, res) => {
       mlResult = await classifyProduct(title, description);
     } catch (err) {
       // If ML service is down, still create product with 'Uncategorized'
+      //print exaact error messsage
+      console.error("ML error:",err.message);
       mlResult = {
         predicted_category: 'Uncategorized',
         confidence: 0,
@@ -343,12 +345,4 @@ exports.getSimilarProducts = async (req, res) => {
     res.json({ similar: fallback, count: fallback.length, fallback: true });
   }
 };
-
-// In server/routes/products.js — add:
-const { fitRecommender, getSimilarProducts } = require('../controllers/productController');
-router.post('/fit-recommender', protect, adminOnly, fitRecommender);
-router.get('/:id/similar', getSimilarProducts);
-
-
-
 

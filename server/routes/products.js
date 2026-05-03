@@ -26,4 +26,14 @@ router.post('/:id/reclassify', protect, adminOnly, reclassifyProduct);
 // Seller routes
 router.get('/seller/:sellerId', getSellerProducts);
 
+// added for recommenderr model
+const { fitRecommender, getSimilarProducts } = require('../controllers/productController');
+router.post('/fit-recommender', protect, adminOnly, fitRecommender);
+router.get('/:id/similar', getSimilarProducts);
+
+
+
+
+
+
 module.exports = router;
