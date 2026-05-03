@@ -30,3 +30,13 @@ class BatchItem(BaseModel):
 class BatchPredictRequest(BaseModel):
     products: list[BatchItem] = Field(..., min_length=1, max_length=50, description="Max 50 products per request.")
 
+#the recommenderr system
+class PredictResponse(BaseModel):
+    predicted_category: str
+    confidence: float
+    low_confidence: bool
+    model_used: str  # now includes "rule_based"
+    rule_matched: bool = False
+    all_probabilities: dict[str, float] = {}
+    input_preview: str = ''
+

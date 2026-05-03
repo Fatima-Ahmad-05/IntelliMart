@@ -7,6 +7,7 @@ import numpy as np
 
 from app.config import ARTIFACTS_DIR, CONFIDENCE_THRESHOLD
 from app.preprocessing import prepare_input
+from app.recommender import ContentRecommender
 
 
 # Blending weight for LR when ensembling — LR is the stronger model
@@ -22,6 +23,7 @@ class ModelRegistry:
     le: object = None
     ready: bool = False
     startup_error: Optional[str] = None
+    recommender: ContentRecommender = field(default_factory=ContentRecommender)
     artifacts_dir: Path = field(default_factory=lambda: ARTIFACTS_DIR)
 
     def load(self) -> None:

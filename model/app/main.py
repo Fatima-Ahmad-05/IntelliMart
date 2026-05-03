@@ -9,6 +9,8 @@ from app.config import APP_NAME, APP_VERSION
 from app.model_service import ModelRegistry
 from app.schemas import BatchPredictRequest, PredictRequest
 
+from app.recommender import ContentRecommender
+
 registry = ModelRegistry()
 
 
@@ -78,6 +80,53 @@ def create_app() -> FastAPI:
             return registry.predict(payload.title, payload.description)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        
+
+
+
+
+    @app.post("/recommend", tags=["Recommendation"])
+    def recommend(payload: dict):
+     """
+    Category-based recommendations for a user.
+    Expects: { preferred_categories: [str], exclude_ids: [str] }
+    """
+     preferred = payload.get('preferred_categories', [])
+     exclude = payload.get('exclude_ids', [])
+     if not preferred:
+         return {'recommendations': [], 'status': 'no_preferences'}
+     # In a full implementation, fetch products from MongoDB here
+    # For now return the logic hook:
+     return {'recommendations': [], 'status': 'ready',
+            'message': 'Pass products list to recommender.recommend_by_category'}
+
+    @app.get("/recommend/similar/{product_id}", tags=["Recommendation"])
+    def recommend_similar(product_id: str, top_k: int = 8):
+     """
+    Content-based: find products similar to a given product.
+    The recommender must be fitted first via /recommend/fit.
+    """
+     if not registry.recommender.fitted:
+         raise HTTPException(status_code=503,
+                            detail="Recommender not fitted. Call /recommend/fit first.")
+     results = registry.recommender.recommend_similar(product_id, top_k)
+     return {'product_id': product_id, 'similar': results, 'count': len(results)}
+
+    @app.post("/recommend/fit", tags=["Recommendation"])
+    def fit_recommender(payload: dict):
+     """
+    Fit the content recommender on a list of products.
+    Call this from Express backend after seeding or on a schedule.
+    Payload: { products: [{_id, title, description, category, confidence}] }
+    """
+     products = payload.get('products', [])
+     if len(products) < 2:
+         raise HTTPException(status_code=400, detail='Need at least 2 products to fit')
+     registry.recommender.fit(products)
+     return {'status': 'fitted', 'product_count': len(products)}
+
+
+
 
     @app.post("/predict/batch", tags=["Prediction"])
     def predict_batch(payload: BatchPredictRequest):

@@ -296,3 +296,59 @@ exports.reclassifyProduct = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc  Fit the content-based recommender on all products
+// @route POST /api/products/fit-recommender  (admin only)
+exports.fitRecommender = async (req, res) => {
+  try {
+    const products = await Product.find({}, 'title description category confidence');
+    const payload = products.map(p => ({
+      _id: p._id.toString(),
+      title: p.title,
+      description: p.description || '',
+      category: p.category,
+      confidence: p.confidence,
+    }));
+    const response = await axios.post(
+      `${config.modelServiceUrl}/recommend/fit`,
+      { products: payload }
+    );
+    res.json({ message: 'Recommender fitted', ...response.data });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc  Get similar products for a product detail page
+// @route GET /api/products/:id/similar
+exports.getSimilarProducts = async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${config.modelServiceUrl}/recommend/similar/${req.params.id}`,
+      { params: { top_k: 8 } }
+    );
+    const ids = response.data.similar.map(s => s.product_id);
+    const products = await Product.find({ _id: { $in: ids } });
+    // Preserve similarity order
+    const ordered = ids.map(id => products.find(p => p._id.toString() === id))
+                       .filter(Boolean);
+    res.json({ similar: ordered, count: ordered.length });
+  } catch {
+    // Fallback: same-category products
+    const product = await Product.findById(req.params.id);
+    const fallback = await Product.find({
+      category: product?.category,
+      _id: { $ne: req.params.id }
+    }).limit(8);
+    res.json({ similar: fallback, count: fallback.length, fallback: true });
+  }
+};
+
+// In server/routes/products.js — add:
+const { fitRecommender, getSimilarProducts } = require('../controllers/productController');
+router.post('/fit-recommender', protect, adminOnly, fitRecommender);
+router.get('/:id/similar', getSimilarProducts);
+
+
+
+
