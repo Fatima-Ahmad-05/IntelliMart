@@ -1,9 +1,157 @@
-"""Backward-compatible entrypoint."""
+from contextlib import asynccontextmanager
 
-from app.main import app
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.config import APP_NAME, APP_VERSION
+from app.model_service import ModelRegistry
+from app.schemas import BatchPredictRequest, PredictRequest
+
+from app.recommender import ContentRecommender
+
+registry = ModelRegistry()
 
 
-if __name__ == "__main__":
-    import uvicorn
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        registry.load()
+    except Exception as exc:
+        registry.ready = False
+        registry.startup_error = str(exc)
+    yield
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title=APP_NAME,
+        version=APP_VERSION,
+        description=(
+            "Production-ready inference service for e-commerce product classification. "
+            "Includes confidence routing, API validation, batch prediction, and web UI integration."
+        ),
+        lifespan=lifespan,
+    )
+
+    # Allow Express backend to call this service
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.mount("/static", StaticFiles(directory="web"), name="static")
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(_: Request, exc: Exception):
+        return JSONResponse(status_code=500, content={"error": "Internal server error", "detail": str(exc)})
+
+    @app.get("/", include_in_schema=False)
+    def home():
+        return FileResponse("web/index.html")
+
+    @app.get("/health", tags=["System"])
+    def health():
+        categories = registry.category_list()
+        return {
+            "status": "ok" if registry.ready else "degraded",
+            "models_loaded": registry.ready,
+            "categories_count": len(categories),
+            "version": APP_VERSION,
+            "startup_error": registry.startup_error,
+        }
+
+    @app.get("/categories", tags=["System"])
+    def categories():
+        if not registry.ready:
+            raise HTTPException(status_code=503, detail=registry.startup_error or "Model not loaded")
+        category_list = registry.category_list()
+        return {"total": len(category_list), "categories": category_list}
+
+    @app.post("/predict", tags=["Prediction"])
+    def predict_single(payload: PredictRequest):
+        if not registry.ready:
+            raise HTTPException(status_code=503, detail=registry.startup_error or "Model not loaded")
+        try:
+            return registry.predict(payload.title, payload.description)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/predict/batch", tags=["Prediction"])
+    def predict_batch(payload: BatchPredictRequest):
+        if not registry.ready:
+            raise HTTPException(status_code=503, detail=registry.startup_error or "Model not loaded")
+        results = []
+        for item in payload.products:
+            try:
+                result = registry.predict(item.title, item.description)
+                result["input_title"] = item.title
+                results.append(result)
+            except Exception as exc:
+                results.append({"input_title": item.title, "predicted_category": None, "error": str(exc)})
+        return {"total": len(results), "results": results}
+
+    @app.post("/predict/title-only", tags=["Prediction"])
+    def predict_title_only(title: str = Query(..., min_length=2, max_length=500)):
+        if not registry.ready:
+            raise HTTPException(status_code=503, detail=registry.startup_error or "Model not loaded")
+        try:
+            return registry.predict(title, None)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # ── Recommender endpoints ────────────────────────────────────────────────
+
+    @app.post("/recommend", tags=["Recommendation"])
+    def recommend(payload: dict):
+        """
+        Category-based recommendations for a user.
+        Expects: { preferred_categories: [str], exclude_ids: [str] }
+        """
+        preferred = payload.get('preferred_categories', [])
+        exclude = payload.get('exclude_ids', [])
+        if not preferred:
+            return {'recommendations': [], 'status': 'no_preferences'}
+        # In a full implementation, fetch products from MongoDB here.
+        # For now return the logic hook:
+        return {
+            'recommendations': [],
+            'status': 'ready',
+            'message': 'Pass products list to recommender.recommend_by_category',
+        }
+
+    @app.post("/recommend/fit", tags=["Recommendation"])
+    def fit_recommender(payload: dict):
+        """
+        Fit the content recommender on a list of products.
+        Call this from Express backend after seeding or on a schedule.
+        Payload: { products: [{_id, title, description, category, confidence}] }
+        """
+        products = payload.get('products', [])
+        if len(products) < 2:
+            raise HTTPException(status_code=400, detail='Need at least 2 products to fit')
+        registry.recommender.fit(products)
+        return {'status': 'fitted', 'product_count': len(products)}
+
+    @app.get("/recommend/similar/{product_id}", tags=["Recommendation"])
+    def recommend_similar(product_id: str, top_k: int = 8):
+        """
+        Content-based: find products similar to a given product.
+        The recommender must be fitted first via /recommend/fit.
+        """
+        if not registry.recommender.fitted:
+            raise HTTPException(
+                status_code=503,
+                detail="Recommender not fitted. Call /recommend/fit first.",
+            )
+        results = registry.recommender.recommend_similar(product_id, top_k)
+        return {'product_id': product_id, 'similar': results, 'count': len(results)}
+
+    return app
+
+
+app = create_app()
